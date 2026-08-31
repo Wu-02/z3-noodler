@@ -1,0 +1,8 @@
+(set-info :status sat)
+(declare-const x Int)
+(declare-const var1452 String)
+(define-const var966 String (str.substr var1452 0 (ubv_to_int ((_ int_to_bv 1) x))))
+(define-const var3817 Int (str.to_code var966))
+(define-const var386 Int 0)
+(assert (> var386 var3817))
+(check-sat)

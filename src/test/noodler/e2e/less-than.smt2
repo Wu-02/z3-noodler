@@ -1,0 +1,6 @@
+(set-info :status unsat)
+(declare-const t String)
+(declare-const s String)
+(assert (str.< s t))
+(assert (str.< t s))
+(check-sat)

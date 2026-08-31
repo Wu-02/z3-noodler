@@ -1,0 +1,54 @@
+{
+  "version": 8,
+  "configurePresets": [
+    {
+      "name": "GCC 14.2.0 x86_64-linux-gnu Debug",
+      "displayName": "GCC 14.2.0 x86_64-linux-gnu Debug",
+      "description": "Debug build using compilers: C = /usr/bin/gcc, CXX = /usr/bin/g++",
+      "binaryDir": "${sourceDir}/cmake-build-debug",
+      "cacheVariables": {
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/../string/z3-install",
+        "CMAKE_C_COMPILER": "/usr/bin/gcc",
+        "CMAKE_CXX_COMPILER": "/usr/bin/g++",
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_CXX_FLAGS_DEBUG": "-g -O3",
+        "CMAKE_DISABLE_FIND_PACKAGE_mata": "TRUE",
+        "FETCHCONTENT_SOURCE_DIR_MATA": "${sourceDir}/build/_deps/mata-src"
+      },
+      "generator": "Ninja"
+    },
+    {
+      "name": "GCC 14.2.0 x86_64-linux-gnu Release",
+      "displayName": "GCC 14.2.0 x86_64-linux-gnu Release",
+      "description": "Release build using compilers: C = /usr/bin/gcc, CXX = /usr/bin/g++",
+      "binaryDir": "${sourceDir}/cmake-build-release",
+      "cacheVariables": {
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/../string/z3-install-release",
+        "CMAKE_C_COMPILER": "/usr/bin/gcc",
+        "CMAKE_CXX_COMPILER": "/usr/bin/g++",
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_DISABLE_FIND_PACKAGE_mata": "TRUE",
+        "FETCHCONTENT_SOURCE_DIR_MATA": "${sourceDir}/build/_deps/mata-src"
+      },
+      "generator": "Ninja"
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "install-shell-debug",
+      "displayName": "Install shell (Debug)",
+      "description": "Build and install only the Debug z3 shell",
+      "configurePreset": "GCC 14.2.0 x86_64-linux-gnu Debug",
+      "jobs": 12,
+      "targets": ["src/shell/install/local"]
+    },
+    {
+      "name": "install-shell-release",
+      "displayName": "Install shell (Release)",
+      "description": "Build and install only the Release z3 shell",
+      "configurePreset": "GCC 14.2.0 x86_64-linux-gnu Release",
+      "jobs": 12,
+      "targets": ["src/shell/install/local"]
+    }
+  ]
+}

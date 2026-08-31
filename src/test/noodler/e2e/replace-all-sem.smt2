@@ -1,0 +1,6 @@
+(set-logic QF_SLIA)
+(set-info :status unsat)
+(declare-fun x () String)
+(assert (= (str.replace_re_all "hello" (re.union (str.to_re "l") (str.to_re "ll")) "x") x))
+(assert (= x "hexo"))
+(check-sat)

@@ -1,0 +1,6 @@
+(set-logic QF_S)
+(set-info :status unsat)
+(declare-fun A () String)
+(declare-fun B () String)
+(assert (= (str.++ A A "a") (str.++ "b" B A)))
+(check-sat)

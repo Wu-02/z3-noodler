@@ -1,0 +1,360 @@
+#ifndef _NOODLER_REGEX_H_
+#define _NOODLER_REGEX_H_
+
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <list>
+#include <mata/alphabet.hh>
+#include <set>
+#include <stack>
+#include <map>
+#include <memory>
+#include <queue>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
+
+#include "params/smt_params.h"
+#include "ast/arith_decl_plugin.h"
+#include "ast/seq_decl_plugin.h"
+#include "util/scoped_vector.h"
+#include "util/union_find.h"
+#include "ast/rewriter/seq_rewriter.h"
+#include "ast/rewriter/th_rewriter.h"
+
+#include "util.h"
+
+// FIXME most if not all these functions should probably be in theory_str_noodler
+
+namespace smt::noodler::regex {
+    using expr_pair = std::pair<expr_ref, expr_ref>;
+    using expr_pair_flag = std::tuple<expr_ref, expr_ref, bool>;
+
+    // simulation reduction bound in states (bigger automata are not reduced)
+    const unsigned RED_BOUND = 1000;
+
+    /**
+     * @brief Info gathered about a regex. 
+     * - min_length: length of shortest words in the regex. In fact it expresses that in the regex there is no 
+     *      word shorter than min_length. It does not mean that regex contains a word of length exactly min_length. 
+     *      If empty == l_true or l_undef, this value is not valid. 
+     * - universal: is regex universal?
+     * - empty: is regex empty?
+     */
+    struct RegexInfo {
+        unsigned min_length;
+        lbool universal;
+        lbool empty;
+    };
+
+    /**
+     * @brief Alphabet wrapper for Z3 alphabet represented by std::set<mata::Symbol> and a Mata alphabet.
+     */
+    class Alphabet {
+    private:
+        std::set<mata::Symbol> alphabet;
+        mata::EnumAlphabet mata_alphabet;
+
+        uint64_t hash = 0;
+        inline void add_or_remove_from_hash(mata::Symbol s) {
+            // FX Hash (rolling hash function)
+            uint64_t x = s;
+            const uint64_t k = 0x517cc1b727220a95ULL;
+            hash ^= (x ^ (x >> 32)) * k;
+        }
+
+    public:
+        Alphabet() = default;
+        Alphabet(const Alphabet&) = default;
+        Alphabet(Alphabet&&) = default;
+        Alphabet& operator=(const Alphabet&) = default;
+        Alphabet& operator=(Alphabet&&) = default;
+        inline bool operator==(const Alphabet& a) const { return alphabet == a.alphabet; }
+        inline uint64_t get_hash() const { return hash; }
+
+        Alphabet(mata::EnumAlphabet alph) : alphabet(), mata_alphabet(std::move(alph)) {
+            for (const mata::Symbol& s : mata_alphabet.get_alphabet_symbols()) {
+                alphabet.insert(s);
+                add_or_remove_from_hash(s);
+            }
+        }
+        
+        Alphabet(std::set<mata::Symbol> alph) : alphabet(std::move(alph)) {
+            for (const auto& symbol : alphabet) {
+                this->mata_alphabet.add_new_symbol(symbol);
+                add_or_remove_from_hash(symbol);
+            }
+        }
+
+        Alphabet(std::initializer_list<mata::Symbol> init) : Alphabet(std::set<mata::Symbol>(init)) { }
+
+        const std::set<mata::Symbol>& get_set_alphabet() const { return alphabet; }
+        const mata::EnumAlphabet& get_mata_alphabet() const { return mata_alphabet; }
+
+        void clear() {
+            alphabet.clear();
+            mata_alphabet.clear();
+            hash = 0;
+        }
+
+        size_t size() const { return alphabet.size(); }
+
+        bool empty() const { return alphabet.empty(); }
+
+        void insert(const mata::Symbol s) {
+            SASSERT(s <= zstring::max_char() || s == util::get_dummy_symbol());
+            if (alphabet.insert(s).second) {
+                add_or_remove_from_hash(s);
+            }
+            mata_alphabet.add_new_symbol(s);
+        }
+
+        template<class InputIt>
+        void insert(InputIt first, InputIt last) {
+            static_assert(std::is_convertible_v<typename std::iterator_traits<InputIt>::value_type, mata::Symbol>,
+                "Iterator must yield mata::Symbol or a type convertible to mata::Symbol");
+
+            for (; first != last; ++first) { insert(*first); }
+        }
+
+        bool contains(const mata::Symbol s) const { return alphabet.contains(s); }
+
+        void erase(const mata::Symbol s) {
+            if (alphabet.erase(s) > 0) {
+                add_or_remove_from_hash(s);
+            }
+            mata_alphabet.erase(s);
+        }
+
+        using const_iterator = std::set<mata::Symbol>::const_iterator;
+
+        const_iterator begin() const { return alphabet.cbegin(); }
+        const_iterator end() const { return alphabet.cend(); }
+        const_iterator cbegin() const { return alphabet.cbegin(); }
+        const_iterator cend() const { return alphabet.cend(); }
+
+        bool is_full () const {
+            if (contains(util::get_dummy_symbol())) { return size() == zstring::max_char()+2; }
+            else { return size() == zstring::max_char()+1; }
+        }
+
+        bool insert_dummy_if_not_full() {
+            if (is_full()) {
+                return false;
+            } else {
+                insert(util::get_dummy_symbol());
+                return true;
+            }
+        }
+
+        /// @brief Returns any symbol that is not in the alphabet
+        mata::Symbol get_unused_symbol() const;
+
+        /// @brief Return zstring corresponding the the word @p word, where dummy symbol is replaced with some valid symbol not in the alphabet.
+        zstring get_string_from_mata_word(mata::Word word) const {
+            zstring res;
+            if (std::ranges::find(word, util::get_dummy_symbol()) != word.end()) {
+                SASSERT(alphabet.contains(util::get_dummy_symbol()));
+                mata::Symbol unused_symbol = get_unused_symbol();
+                std::replace(word.begin(), word.end(), util::get_dummy_symbol(), unused_symbol);
+            }
+            return zstring(word.size(), word.data());
+        }
+    };
+
+    /**
+     * @brief Can be used in hash tables for hashing alphabets
+     */
+    struct AlphabetHasher {
+        std::size_t operator()(const Alphabet& k) const {
+            return k.get_hash();
+        }
+    };
+
+    /**
+     * Extract symbols from a given expression @p ex. Append to the output parameter @p alphabet.
+     * @param[in] ex Expression to be checked for symbols.
+     * @param[in] m_util_s Seq util for AST.
+     * @param[out] alphabet A set of symbols with where found symbols are appended to.
+     */
+    void extract_symbols(expr* const ex, const seq_util& m_util_s, Alphabet& alphabet);
+
+    class NfaConstructor {
+    private:
+        using Nfa = mata::nfa::Nfa;
+        /// Used internaly by conv_to_nfa when the automaton isn't in a cache
+        [[nodiscard]] std::shared_ptr<Nfa> create_nfa_for_expr(app *expression, const seq_util& m_util_s, const ast_manager& m, const Alphabet& alphabet);
+
+        // For every alphabet, we have 3 caches
+        // One is used for the automata representing the given expression
+        // The other two are for their complemented and determinized versions
+        enum {
+            INITIAL_CACHE,
+            DETERMINIZED_CACHE,
+            COMPLEMENTED_CACHE,
+            N_CACHES
+        };
+        using CacheForAlphabet = std::array<std::unordered_map<app*, std::shared_ptr<const Nfa>>, N_CACHES>;
+        using AutomataCache = std::unordered_map<Alphabet, CacheForAlphabet, AlphabetHasher>;
+
+        AutomataCache aut_cache;
+        // For each app* key in the automata cache, we also store a reference to it to ensure
+        // the pointer doesn't get garbage collected, which could cause problems if you are very unlucky
+        std::vector<app_ref> pinned_refs{};
+
+    public:
+        /**
+         * Convert expression @p expr to NFA.
+         * @param[in] expression Expression to be converted to NFA.
+         * @param[in] m_util_s Seq util for AST.
+         * @param[in] alphabet Alphabet to be used in re.allchar (SMT2: '.') expressions.
+         * @param[in] determinize Determinize intermediate automata
+         * @param[in] make_complement Whether to make complement of the passed @p expr instead.
+         * @return The resulting regex.
+         */
+        [[nodiscard]] std::shared_ptr<const mata::nfa::Nfa> conv_to_nfa(app *expression, const seq_util& m_util_s, ast_manager& m,
+                                                 const Alphabet& alphabet, bool determinize = false, bool make_complement = false);
+    };
+
+    /**
+     * @brief Get basic information about the regular expression in the form of RegexInfo (see the description above). 
+     * RegexInfo gathers information about emptiness; universality; length of shortest words
+     * 
+     * @param expression Regex to be checked
+     * @param m_util_s string ast util
+     * @param m ast manager
+     * @return RegexInfo 
+     */
+    RegexInfo get_regex_info(const app *expression, const seq_util& m_util_s);
+
+    /**
+     * @brief Get the sum of loops of a regex (loop inside a loop is multiplied)
+     * 
+     * @param reg some regular expression predicate (can be also string literal/var)
+     * @param m_util_s string ast util
+     * @return sum of loops inside @p regex, with nested loops multiplied 
+     */
+    unsigned get_loop_sum(const app* reg, const seq_util& m_util_s);
+
+    class regex_model_fail : public default_exception {
+    public:
+        regex_model_fail() : default_exception("Failed to find model of a regex") {}
+    };
+
+    /**
+     * @brief Try to g et some word accepted by @p regex
+     * 
+     * It currently cannot handle intersection, complement, or string variables inside regex.
+     * 
+     * @param regex Regex to be checked
+     * @param m_util_s string ast util
+     * @return word accepted by @p regex
+     * @throws regex_model_fail if the model cannot be found (either regex represents empty language, or it contains intersection/complement/string variables, which this function currently cannot handle)
+     */
+    zstring get_model_from_regex(const app *regex, const seq_util& m_util_s);
+
+    /// Prefix tree for multiple replace_all applications so that we can construct transducer simultaneously
+    class ReplaceAllPrefixTree {
+        std::set<unsigned> replace_chars; /// the chars occuring in the replace strings of replace_all operations (except the ones of length 1)
+        std::set<unsigned> find_delimiters; /// the chars occuring in the first position of find strings of replace_all operation (and the replace strings of length 1)
+        std::set<unsigned> find_non_delimiters; /// the chars occuring in the second, third, etc. find strings of replace_all operations
+        mata::nfa::Nfa prefix_automaton{1,{0}}; /// the prefix "tree" for find strings of replace_all operations
+        std::map<mata::nfa::State, mata::Word> replacing_map{{0, {}}}; /// maps states of prefix_automaton that to the string that should be replaced by (for find strings it will be corresponding replace, otherwise the prefix)
+        std::map<mata::Symbol, std::set<mata::nfa::State>> one_symbol_replace_to_prefix_state; /// for each symbol w (|w| = 1) and q where w = replacing_map[q], we have q \in one_symbol_replace_to_prefix_state[w]
+
+        /**
+         * @brief Get the next state of prefix tree (if exists) from state @p from trough symbol @p symbol
+         * 
+         * @param from the state from which we go
+         * @param symbol the symbol through which we go
+         * @return the next state (nullopt if it does not exists)
+         */
+        std::optional<mata::nfa::State> get_next_state(mata::nfa::State from, mata::Symbol symbol) {
+            auto next_state_it = prefix_automaton.delta[from].find(symbol);
+            if (next_state_it != prefix_automaton.delta[from].end()) {
+                SASSERT(next_state_it->targets.size() == 1);
+                return next_state_it->targets.front();
+            } else {
+                return std::nullopt;
+            }
+        }
+
+        /// true iff @p state is the last state on the path of prefix tree, i.e., no successors (represents that the path to this state should be replaced in input string by replacing_map[state])
+        bool is_prefix_state_last(mata::nfa::State state) {
+            return prefix_automaton.delta[state].empty();
+        }
+
+        /// true iff @p state is final in the prefix tree (represents the situation that there was some match of find string from the previous final state)
+        bool is_prefix_state_final(mata::nfa::State state) {
+            return prefix_automaton.final[state];
+        }
+
+    public:
+        ReplaceAllPrefixTree() = default;
+        /**
+         * @brief Add another replace_all application where each @p find should be replaced by @p replace
+         * 
+         * It also checks if this application can be added to existing ones by some simple heuristics:
+         *      - @p find must be of the form where the first symbol (delimiter) is different than all
+         *        the other symbols (non-delimiters) of @p find and furthermore, each previous and current
+         *        @p find must have these delimiters different than all the non-delimiters of previous and
+         *        the current @p find. The point of this rule is so that we cannot match a word while we
+         *        are already matching some. For example if we have
+         *          (str.replace_all (str.replace_all x "bad" "c") "a" "f")
+         *        then for the word x="bac", it should transform it into "bfc". However, we would start
+         *        matching on the first character 'b' expecting the word "bad". But on 'c', we would realise
+         *        it is not correct and we would have to go back and check if there was not some 'a'.
+         *        Currently, this is not gonna happen, so it is not allowed.
+         *      - @p find cannot be a prefix of the find string of some previous replace_all
+         *        operation. For example if we had "ab" is replaced with "c" and then we
+         *        would want replace_all where "a" is replaced with "d", the simultaneous
+         *        replacing would always replace "a" first, which is incorrect, "ab" should
+         *        be replaced.
+         *      - @p find cannot contain any symbol that occurs in any of the previous replace strings.
+         *        This could cause problems, for example, if we have
+         *          (str.replace_all (str.replace_all x "dc" "g") "ag" "r")
+         *        then this would change x="adc" to "r". However, the simultaneus matching would only match "dc",
+         *        transforming it into "ar" and we would not go back to check that this can be again transformed.
+         *      - The previous condition is slightly weaker, we look at the replace strings of length 1 as delimiters,
+         *        therefore we allow for example
+         *          (str.replace_all (str.replace_all x "abc" "d") "de" "f")
+         *        Here we can remember that if we match "abc" in input string (replaced by "d"), we can continue,
+         *        possibly also matching "de". See https://github.com/VeriFIT/z3-noodler/pull/227#issuecomment-2893972253
+         *        for an explanation.
+         * If it cannot be added, the function returns false and you should get the transducer.
+         * 
+         * @param find the string whose every occurence we want to replace
+         * @param replace what to replace with
+         * @return true If the replace_all application is added to this prefix tree
+         */
+        bool add_find(const zstring& find, const zstring& replace);
+
+        /**
+         * @brief Creates a transducer replacing all added finds by their replaces simultaneously
+         * 
+         * @param mata_alph The alphabet used for creating the transducer
+         * @return The simultaneous transducer
+         */
+        mata::nft::Nft create_transducer(const Alphabet& mata_alph);
+    };
+
+    /**
+     * @brief Gather transducer constraint (replace_all, replace_re_all) from a concatenation. Recursively applies also on 
+     * nested calls of replace_all, replace_re_all.
+     * 
+     * @param ex Expression to gather replaces from.
+     * @param m AST manager
+     * @param m_util_s Seq util for AST.
+     * @param pred_replace Replacement of predicate and functions
+     * @param mata_alph Mata alphabet containing symbols from the current instance
+     * @param[out] transducer_preds Newly created transducer constraints
+     */
+    void gather_transducer_constraints(app* ex, ast_manager& m, const seq_util& m_util_s,
+            obj_map<expr, expr*>& pred_replace, const Alphabet& mata_alph, NfaConstructor &nfa_constructor,
+            Formula& transducer_preds);
+
+}
+
+#endif

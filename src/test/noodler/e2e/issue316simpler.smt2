@@ -1,0 +1,5 @@
+(set-logic QF_SLIA)
+(set-info :status sat)
+(declare-fun s () String)
+(assert (not (str.contains " " s)))
+(check-sat)

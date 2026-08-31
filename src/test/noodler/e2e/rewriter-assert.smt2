@@ -1,0 +1,5 @@
+(set-logic QF_SLIA)
+(set-info :status unsat)
+(declare-fun s () String)
+(assert (= 1 (str.indexof (str.++ "si") (ite (str.is_digit (str.++ s "si")) "i" ""))))
+(check-sat)

@@ -1,0 +1,8 @@
+(set-logic QF_SLIA)
+(set-info :status sat)
+(declare-const v0 String)
+(declare-const v1 String)
+(declare-const v2 String)
+(assert (=> (= v2 "") (= v0 "")))
+(assert (=> (= v2 "") (not (str.prefixof "a" (str.++ v1 v0)))))
+(check-sat)

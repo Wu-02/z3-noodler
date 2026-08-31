@@ -1,0 +1,11 @@
+(set-logic ALL)
+(set-info :status unsat)
+(declare-fun x () String)
+(declare-fun y () String)
+(declare-fun sb (String) Bool)
+
+(assert (= (sb x) (not (sb y))))
+(assert (= 1 (str.len x)))
+(assert (= y "a"))
+(assert (str.in_re x (re.union (str.to_re "a") (str.to_re "aa"))))
+(check-sat)

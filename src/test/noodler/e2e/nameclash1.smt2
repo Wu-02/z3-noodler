@@ -1,0 +1,6 @@
+(set-logic QF_SLIA)
+(set-info :status unsat)
+(declare-fun to_int_result!n0 () String)
+(assert (> (str.to_int to_int_result!n0) (str.len to_int_result!n0)))
+(assert (str.in_re to_int_result!n0 (re.++ (str.to_re "0") (re.range "2" "2"))))
+(check-sat)

@@ -1,0 +1,6 @@
+(set-logic ALL)
+(set-info :status sat)
+(assert (forall ((s String)) 
+    (>= (str.len s) 0)
+))
+(check-sat)

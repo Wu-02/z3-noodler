@@ -1,0 +1,6 @@
+(set-logic QF_S)
+(set-info :status unsat)
+(declare-const X String)
+(assert (not (str.in_re X (re.range "\u{0}" "\u{2ffff}"))))
+(assert (str.in_re X re.allchar))
+(check-sat)

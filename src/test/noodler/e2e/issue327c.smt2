@@ -1,0 +1,6 @@
+(set-info :status sat)
+(declare-const bv (_ BitVec 1))
+(declare-const s String)
+(assert (>= (ubv_to_int bv) 0))
+(assert (< 0 (str.to_code s)))
+(check-sat)

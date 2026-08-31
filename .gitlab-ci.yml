@@ -1,0 +1,40 @@
+# ─────────────────────────────────────────────────────────────────────
+#  Z3-Noodler — Build Pipeline
+#
+#  Produces a `z3-install/` artifact (bin/ + lib/) that downstream
+#  projects can consume via `needs: [project: ..., artifacts: true]`.
+# ─────────────────────────────────────────────────────────────────────
+
+variables:
+  Z3_INSTALL_PREFIX: "$CI_PROJECT_DIR/z3-install"
+
+stages:
+  - build
+
+build-z3-noodler:
+  stage: build
+  image: ubuntu:24.04
+
+  before_script:
+    - apt-get update -qq
+    - apt-get install -y -qq --no-install-recommends
+      git cmake g++ make python3 ca-certificates
+      > /dev/null 2>&1
+
+  script:
+    - cmake
+      -S .
+      -B build
+      -DCMAKE_BUILD_TYPE=Debug
+      -DCMAKE_INSTALL_PREFIX="${Z3_INSTALL_PREFIX}"
+    - cmake --build build --parallel "$(nproc)"
+    - build/z3 --version
+    - cmake --install build --prefix "${Z3_INSTALL_PREFIX}"
+    - echo "Installed files:"
+    - find "$Z3_INSTALL_PREFIX" -type f | sort
+    - $Z3_INSTALL_PREFIX/bin/z3 --version
+
+  artifacts:
+    paths:
+      - z3-install/
+    expire_in: 7 days

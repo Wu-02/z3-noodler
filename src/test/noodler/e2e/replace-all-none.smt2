@@ -1,0 +1,6 @@
+(set-logic QF_SLIA)
+(set-info :status sat)
+(declare-fun t () String)
+(assert (= t (str.replace_re_all "a" re.none "b")))
+(assert (= t "a"))
+(check-sat)

@@ -1,0 +1,7 @@
+(set-logic QF_SLIA)
+(set-info :status sat)
+(declare-fun v0 () String)
+(assert (= (str.len v0) 0))
+(assert (= (str.len (str.substr (str.replace_all v0 " " "/") 0 1)) 0))
+(assert (= (str.len (str.substr (str.replace_all v0 "," "/") 0 1)) 0))
+(check-sat)
