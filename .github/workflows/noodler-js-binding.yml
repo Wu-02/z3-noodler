@@ -31,7 +31,7 @@ jobs:
           actions-cache-folder: 'emsdk-cache'
 
       - name: Clone Mata
-        uses: GuillaumeFalourd/clone-github-repo-action@v2.3
+        uses: GuillaumeFalourd/clone-github-repo-action@v3
         with:
           owner: 'VeriFIT'
           repository: 'mata'
