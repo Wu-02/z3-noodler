@@ -47,7 +47,7 @@ jobs:
 
     steps:
       - name: Checkout Z3-Noodler
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7.0.1
         with: 
           fetch-depth: 0
           ref: ${{ inputs.ref || github.ref }}
