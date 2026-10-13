@@ -17,7 +17,7 @@ jobs:
     steps:
 
       - name: Check out repository code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
           # if PR, checkout the PR's repo (needed for PRs coming from forks)
